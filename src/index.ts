@@ -1,10 +1,11 @@
 import { Octokit as OctokitRest } from '@octokit/rest';
 import { readFileSync } from 'fs';
 import { nanoid } from 'nanoid';
-import path from 'path';
+import * as path from 'path';
 
 
-const configPath = path.join(__dirname, `./config.json`);
+const configPath = path.join(__dirname, `../config.json`);
+console.debug(configPath);
 const config = JSON.parse(readFileSync(configPath).toLocaleString());
 
 const octokitRest = new OctokitRest({
