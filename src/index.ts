@@ -1,4 +1,6 @@
 import { Octokit as OctokitRest } from '@octokit/rest';
+import { OctokitResponse, ReposGetCommitResponseData } from '@octokit/types';
+import { resolve } from 'dns';
 import { readFileSync } from 'fs';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
@@ -18,11 +20,60 @@ const gitInfo = {
     ref: config.ref,
 };
 
+const gitInfoNoRef = {
+    owner: config.owner,
+    repo: config.repo,
+};
+
 const targetContentID = config.targetID;
 
 const getCurrentDate = () => {
     return new Date().toISOString().replace(/^(.+?)T(.+?)\..+?$/, '$1 $2');
 };
+
+const lastDate = '2020-10-01T00:00:00Z';
+const getUpdatedFiles = async () => {
+    const commitList = await octokitRest.repos.listCommits({
+        ...gitInfo,
+        since: lastDate
+    }).catch(err => {
+        console.dir(err);
+    });
+    if (!commitList) {
+        return;
+    }
+    // console.dir(commits.data);
+    const getters: Promise<OctokitResponse<ReposGetCommitResponseData>>[] = [];
+
+    commitList.data.forEach(commit => {
+        const getter = (sha: string) =>
+            // This may be bug of octokit/rest
+            // sha must not be set on commit_share but on ref
+            octokitRest.repos.getCommit({
+                ...gitInfoNoRef,
+                ref: sha,
+                commit_sha: ''
+            });
+        getters.push(getter(commit.sha));
+    });
+    const detailedCommits = await Promise.all(getters).catch(err => console.dir(err));
+    if (!detailedCommits) {
+        return;
+    }
+    const contents = detailedCommits.map(commit => {
+        const patch = commit.data.files[0].patch;
+        const res = patch.match(/^\+({.+})$/m);
+        if (res) {
+            return res[1];
+        }
+        else{
+            return ''
+        }
+    }).filter(content => content !== '');
+    console.dir(contents);
+};
+getUpdatedFiles();
+
 
 const crud = async () => {
     /**
@@ -84,4 +135,4 @@ const crud = async () => {
 
 };
 
-crud();
+//crud();
