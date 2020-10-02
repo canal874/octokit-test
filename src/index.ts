@@ -1,5 +1,5 @@
 import { Octokit as OctokitRest } from '@octokit/rest';
-import { OctokitResponse, ReposGetCommitResponseData } from '@octokit/types';
+import { OctokitResponse, ReposCreateOrUpdateFileContentsResponse201Data, ReposCreateOrUpdateFileContentsResponseData, ReposGetCommitResponseData } from '@octokit/types';
 import { readFileSync } from 'fs';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
@@ -64,73 +64,107 @@ const getUpdatedFiles = async () => {
         }
     }).filter(content => content !== '');
     console.dir(contents);
+
+    /**
+     * Retry to get SHA and commit if conflict
+     */
 };
 
 
 const cacheOfContentSHA = new Map();
 
 const update = async (id: string) => {
-    /**
-     * 1. Get SHA of blob by using id
-     */
-    let oldSHA = cacheOfContentSHA.get(id);
-    if (!oldSHA) {
-        const oldContentResult = await octokitRest.repos.getContent({
-            ...gitInfo,
-            path: id,
-        }).catch(err => {
-            console.dir(err);
-        });
-        if (!oldContentResult) {
-            return;
+    let trialCount = 0;
+    const getAndUpdateContent = async () => {
+        trialCount++;
+        console.debug('Trial: ' + trialCount);
+        /**
+         * 1. Get SHA of blob by using id
+         */
+        let oldSHA = cacheOfContentSHA.get(id);
+        if (!oldSHA) {
+            const oldContentResult = await octokitRest.repos.getContent({
+                ...gitInfo,
+                path: id,
+            }).catch(err => {
+                return err;
+            });
+            oldSHA = oldContentResult.data.sha;
+
+            // const oldContent = Buffer.from(oldContentResult.data.content, oldContentResult.data.encoding as any).toString();
+            // console.debug('[old content] ' + oldContent);        
         }
-        oldSHA = oldContentResult.data.sha;
+        console.log('old sha: ' + oldSHA);
+        /**
+         * 2. Update blob and Commit
+         */
+        const updatedObj = {
+            ...contentTemplate,
+            id: id,
+            modifiedDate: getCurrentDate(),
+        };
+        const updatedContent = JSON.stringify(updatedObj);
+        console.debug('[new content] ' + updatedContent);
 
-        // const oldContent = Buffer.from(oldContentResult.data.content, oldContentResult.data.encoding as any).toString();
-        // console.debug('[old content] ' + oldContent);        
-    }
-    console.log(oldSHA);
-    /**
-     * 2. Update blob and Commit
-     */
-    const updatedObj = {
-        ...contentTemplate,
-        id: id,
-        modifiedDate: getCurrentDate(),
+        // [createOrUpdateFileContents API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/createOrUpdateFileContents.md
+        const result = await octokitRest.repos.createOrUpdateFileContents({
+            ...gitInfo,
+            path: targetContentID,
+            message: config.messageUpdated,
+            content: Buffer.from(updatedContent).toString('base64'),
+            sha: oldSHA,
+        }).catch(err => {
+            return err;
+        });
+
+        console.debug('[update result]');        
+        console.dir(result);        
+        return result;
     };
-    const updatedContent = JSON.stringify(updatedObj);
-    console.debug('[new content] ' + updatedContent);
-
-    // [createOrUpdateFileContents API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/createOrUpdateFileContents.md
-    const updatedContentResult = await octokitRest.repos.createOrUpdateFileContents({
-        ...gitInfo,
-        path: targetContentID,
-        message: config.messageUpdated,
-        content: Buffer.from(updatedContent).toString('base64'),
-        sha: oldSHA,
-    }).catch(err => {
-        console.dir(err);
-    });
-
-    console.dir(updatedContentResult);
-
-    if (!updatedContentResult) {
-        return;
-    }
 
     /**
      * 3. Retry to get SHA and commit if conflict
-     */    
+     */
+    let updatedContentResult: OctokitResponse<ReposCreateOrUpdateFileContentsResponseData | ReposCreateOrUpdateFileContentsResponse201Data> | void;
+    let retry = false;
+    do {
+        updatedContentResult = await getAndUpdateContent().catch(err => console.debug(err));
+        retry = false;
+        if (!updatedContentResult){
+            // Network error?
+        }
+        else if(updatedContentResult.status === 403) {
+            if(updatedContentResult.headers["x-ratelimit-remaining"] && updatedContentResult.headers["x-ratelimit-remaining"] === '0'){
+                // Reach rate limit
+            }
+/*            else if(){
+                // Abuse limit
+            } */
+            else {
+                // Other
 
+            }
+        }
+        else if(updatedContentResult.status === 409) {        
+            // HttpError: 409 Conflict
+            // Remove cache to get SHA again
+            cacheOfContentSHA.delete(id);
+            retry = true;
+        }
+
+        console.debug('retry: ' + retry);
+    } while(retry);
 
     /**
      * 4. Cache SHA of new blob
-     */    
-    const updatedSHA = updatedContentResult.data.content.sha;
-    console.debug('updated sha: ' + updatedSHA);
+     */
+    if(updatedContentResult){
+        const updatedSHA = updatedContentResult.data.content.sha;
+        console.debug('updated sha: ' + updatedSHA);
 
-    // SHA should be cached to reduce API requests
-    cacheOfContentSHA.set(id, updatedSHA);
+        // SHA should be cached to reduce API requests
+        cacheOfContentSHA.set(id, updatedSHA);
+    }
 };
 
 const create = async () => {
