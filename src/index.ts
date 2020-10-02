@@ -1,6 +1,5 @@
 import { Octokit as OctokitRest } from '@octokit/rest';
 import { OctokitResponse, ReposGetCommitResponseData } from '@octokit/types';
-import { resolve } from 'dns';
 import { readFileSync } from 'fs';
 import { nanoid } from 'nanoid';
 import * as path from 'path';
@@ -18,6 +17,8 @@ const gitInfo = {
     owner: config.owner,
     repo: config.repo,
 };
+
+const contentTemplate = { "title": "First Item", "completed": false, "modifiedDate": "2020-10-02 05:32:38", "deleted": false };
 
 const targetContentID = config.targetID;
 
@@ -58,51 +59,81 @@ const getUpdatedFiles = async () => {
         if (res) {
             return res[1];
         }
-        else{
+        else {
             return ''
         }
     }).filter(content => content !== '');
     console.dir(contents);
 };
-getUpdatedFiles();
 
 
-const crud = async () => {
+const cacheOfContentSHA = new Map();
+
+const update = async (id: string) => {
     /**
-     * Get blob
+     * 1. Get SHA of blob by using id
      */
-    const content = await octokitRest.repos.getContent({
+    let oldSHA = cacheOfContentSHA.get(id);
+    if (!oldSHA) {
+        const oldContentResult = await octokitRest.repos.getContent({
+            ...gitInfo,
+            path: id,
+        }).catch(err => {
+            console.dir(err);
+        });
+        if (!oldContentResult) {
+            return;
+        }
+        oldSHA = oldContentResult.data.sha;
+
+        // const oldContent = Buffer.from(oldContentResult.data.content, oldContentResult.data.encoding as any).toString();
+        // console.debug('[old content] ' + oldContent);        
+    }
+    console.log(oldSHA);
+    /**
+     * 2. Update blob and Commit
+     */
+    const updatedObj = {
+        ...contentTemplate,
+        id: id,
+        modifiedDate: getCurrentDate(),
+    };
+    const updatedContent = JSON.stringify(updatedObj);
+    console.debug('[new content] ' + updatedContent);
+
+    // [createOrUpdateFileContents API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/createOrUpdateFileContents.md
+    const updatedContentResult = await octokitRest.repos.createOrUpdateFileContents({
         ...gitInfo,
         path: targetContentID,
+        message: config.messageUpdated,
+        content: Buffer.from(updatedContent).toString('base64'),
+        sha: oldSHA,
     }).catch(err => {
         console.dir(err);
     });
-    if (!content) {
+
+    console.dir(updatedContentResult);
+
+    if (!updatedContentResult) {
         return;
     }
+
     /**
-     * Update blob and Commit
-     */
-    const targetContent = Buffer.from(content.data.content, content.data.encoding as any).toString();
-    const sha = content.data.sha;
-    console.debug(targetContent);
-    const targetObj = JSON.parse(targetContent);
-    targetObj['modifiedDate'] = getCurrentDate();
-    const updatedContent = JSON.stringify(targetObj);
-
-    const resultUpdate = await octokitRest.repos.createOrUpdateFileContents({
-        ...gitInfo,
-        path: targetContentID,
-        message: 'Updated by rxdesktop',
-        content: Buffer.from(updatedContent).toString('base64'),
-        sha: sha,
-    }).catch(err => {
-        console.dir(err);
-    });
-
-    console.dir(resultUpdate);
+     * 3. Retry to get SHA and commit if conflict
+     */    
 
 
+    /**
+     * 4. Cache SHA of new blob
+     */    
+    const updatedSHA = updatedContentResult.data.content.sha;
+    console.debug('updated sha: ' + updatedSHA);
+
+    // SHA should be cached to reduce API requests
+    cacheOfContentSHA.set(id, updatedSHA);
+};
+
+const create = async () => {
     /**
      * Create blob and Commit
      */
@@ -117,14 +148,20 @@ const crud = async () => {
     const resultCreate = await octokitRest.repos.createOrUpdateFileContents({
         ...gitInfo,
         path: newID,
-        message: 'Created by rxdesktop',
+        message: config.messageCreated,
         content: Buffer.from(newContent).toString('base64'),
     }).catch(err => {
         console.dir(err);
     });
 
     console.dir(resultCreate);
+}
 
-};
+const test = async () => {
+    await update(config.targetID);
+    await update(config.targetID);
+    // getUpdatedFiles();
+    // create();
+}
 
-crud();
+test();
