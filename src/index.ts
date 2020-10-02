@@ -11,16 +11,10 @@ console.debug(configPath);
 const config = JSON.parse(readFileSync(configPath).toLocaleString());
 
 const octokitRest = new OctokitRest({
-    auth: config.auth
+    auth: config.auth,
 });
 
 const gitInfo = {
-    owner: config.owner,
-    repo: config.repo,
-    ref: config.ref,
-};
-
-const gitInfoNoRef = {
     owner: config.owner,
     repo: config.repo,
 };
@@ -47,12 +41,10 @@ const getUpdatedFiles = async () => {
 
     commitList.data.forEach(commit => {
         const getter = (sha: string) =>
-            // This may be bug of octokit/rest
-            // sha must not be set on commit_share but on ref
+            // [getCommit API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/getCommit.md
             octokitRest.repos.getCommit({
-                ...gitInfoNoRef,
+                ...gitInfo,
                 ref: sha,
-                commit_sha: ''
             });
         getters.push(getter(commit.sha));
     });
@@ -125,7 +117,7 @@ const crud = async () => {
     const resultCreate = await octokitRest.repos.createOrUpdateFileContents({
         ...gitInfo,
         path: newID,
-        message: 'Updated by rxdesktop',
+        message: 'Created by rxdesktop',
         content: Buffer.from(newContent).toString('base64'),
     }).catch(err => {
         console.dir(err);
@@ -135,4 +127,4 @@ const crud = async () => {
 
 };
 
-//crud();
+crud();
