@@ -1,4 +1,4 @@
-import { Octokit as OctokitRest } from '@octokit/rest';
+import { Octokit } from '@octokit/rest';
 import { OctokitResponse, ReposCreateOrUpdateFileContentsResponse201Data, ReposCreateOrUpdateFileContentsResponseData, ReposGetCommitResponseData } from '@octokit/types';
 import { readFileSync } from 'fs';
 import { nanoid } from 'nanoid';
@@ -9,14 +9,14 @@ const configPath = path.join(__dirname, `../config.json`);
 console.debug(configPath);
 const config = JSON.parse(readFileSync(configPath).toLocaleString());
 
-const octokitRest = new OctokitRest({
-    auth: config.auth,
-});
-
 const gitInfo = {
     owner: config.owner,
     repo: config.repo,
 };
+
+const octokit = new Octokit({
+    auth: config.auth,
+});
 
 const contentTemplate = { "title": "First Item", "completed": false, "modifiedDate": "2020-10-02 05:32:38", "deleted": false };
 
@@ -27,27 +27,60 @@ const getCurrentDate = () => {
 };
 
 const lastDate = '2020-10-01T00:00:00Z';
+
 const getUpdatedFiles = async () => {
+    // Pagenation arranges page from new commits (page 1) to old commits (last page).
+    // The last page cannot be got until calling listCommits once.
+    // So there is no method to get last page by one pass interaction.
+    /* 
     const commitList = await octokitRest.repos.listCommits({
         ...gitInfo,
-        since: lastDate
+        since: lastDate,
+        //        per_page: 5,
+        //        page: 1
     }).catch(err => {
         console.dir(err);
     });
     if (!commitList) {
         return;
     }
-    // console.dir(commits.data);
+    */
+    // GraphQL API returns minimum data while REST API returns more informative data
+    const repos: any = await octokit.graphql(`
+        {
+            repository(owner: "${gitInfo.owner}", name: "${gitInfo.repo}") {
+                defaultBranchRef {
+                    target {
+                        ... on Commit {
+                            history(since: "2020-10-01T00:00:00") {
+                                nodes {
+                                    oid
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        `
+    ).catch(err => {
+        console.dir(err);
+    });
+    console.dir(repos);
+    const commitList: { "oid": string }[] = repos.repository.defaultBranchRef.target.history.nodes;
+
+    console.dir(commitList);
+    
     const getters: Promise<OctokitResponse<ReposGetCommitResponseData>>[] = [];
 
-    commitList.data.forEach(commit => {
+    commitList.forEach(commit => {
         const getter = (sha: string) =>
             // [getCommit API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/getCommit.md
-            octokitRest.repos.getCommit({
+            octokit.repos.getCommit({
                 ...gitInfo,
                 ref: sha,
             });
-        getters.push(getter(commit.sha));
+        getters.push(getter(commit.oid));
     });
     const detailedCommits = await Promise.all(getters).catch(err => console.dir(err));
     if (!detailedCommits) {
@@ -83,7 +116,7 @@ const update = async (id: string) => {
          */
         let oldSHA = cacheOfContentSHA.get(id);
         if (!oldSHA) {
-            const oldContentResult = await octokitRest.repos.getContent({
+            const oldContentResult = await octokit.repos.getContent({
                 ...gitInfo,
                 path: id,
             }).catch(err => {
@@ -107,7 +140,7 @@ const update = async (id: string) => {
         console.debug('[new content] ' + updatedContent);
 
         // [createOrUpdateFileContents API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/createOrUpdateFileContents.md
-        const result = await octokitRest.repos.createOrUpdateFileContents({
+        const result = await octokit.repos.createOrUpdateFileContents({
             ...gitInfo,
             path: targetContentID,
             message: config.messageUpdated,
@@ -179,7 +212,7 @@ const create = async () => {
         "modifiedDate": getCurrentDate(),
         "deleted": false
     });
-    const resultCreate = await octokitRest.repos.createOrUpdateFileContents({
+    const resultCreate = await octokit.repos.createOrUpdateFileContents({
         ...gitInfo,
         path: newID,
         message: config.messageCreated,
@@ -192,9 +225,11 @@ const create = async () => {
 }
 
 const test = async () => {
-    await update(config.targetID);
-    await update(config.targetID);
-    // getUpdatedFiles();
+    getUpdatedFiles();
+
+//    await update(config.targetID);
+//    await update(config.targetID);
+    
     // create();
 }
 
