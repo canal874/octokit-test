@@ -20,8 +20,6 @@ const octokit = new Octokit({
 
 const contentTemplate = { "title": "First Item", "completed": false, "modifiedDate": "2020-10-02 05:32:38", "deleted": false };
 
-const targetContentID = config.targetID;
-
 const getCurrentDate = () => {
     return new Date().toISOString().replace(/^(.+?)T(.+?)\..+?$/, '$1 $2');
 };
@@ -55,6 +53,7 @@ const getUpdatedFiles = async () => {
                             history(since: "2020-10-01T00:00:00") {
                                 nodes {
                                     oid
+                                    pushedDate
                                 }
                             }
                         }
@@ -67,7 +66,7 @@ const getUpdatedFiles = async () => {
         console.dir(err);
     });
     console.dir(repos);
-    const commitList: { "oid": string }[] = repos.repository.defaultBranchRef.target.history.nodes;
+    const commitList: { "oid": string, "pushedDate": string }[] = repos.repository.defaultBranchRef.target.history.nodes;
 
     console.dir(commitList);
     
@@ -140,13 +139,17 @@ const update = async (id: string) => {
         console.debug('[new content] ' + updatedContent);
 
         // [createOrUpdateFileContents API] https://github.com/octokit/plugin-rest-endpoint-methods.js/blob/5819d6ad02e18a31dbb50aab55d5d9411928ad3f/docs/repos/createOrUpdateFileContents.md
-        const result = await octokit.repos.createOrUpdateFileContents({
+        const options: { owner: string; repo: string; path: string; sha?: string, message: string; content: string } = {
             ...gitInfo,
-            path: targetContentID,
+            path: id,
             message: config.messageUpdated,
             content: Buffer.from(updatedContent).toString('base64'),
-            sha: oldSHA,
-        }).catch(err => {
+        };
+        // If update
+        options['sha'] = oldSHA;
+        const result = await octokit.repos.createOrUpdateFileContents(
+            options
+        ).catch(err => {
             return err;
         });
 
@@ -220,6 +223,11 @@ const create = async () => {
     }).catch(err => {
         console.dir(err);
     });
+    /*
+     * Check conflict and retry
+     */
+
+    // ...
 
     console.dir(resultCreate);
 }
