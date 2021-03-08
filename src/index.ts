@@ -232,13 +232,28 @@ const create = async () => {
     console.dir(resultCreate);
 }
 
+const createRepository = async (repositoryName: string) => {
+  await octokit.repos.createForAuthenticatedUser({name: repositoryName});
+  // May throw HttpError
+  // HttpError: Repository creation failed.:
+  // {"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account
+};
+
+const deleteRepository = async (repositoryName: string) => {
+  await octokit.repos.delete({owner: 'sosuisen-apitest', repo: repositoryName});
+};
+
 const test = async () => {
-    getUpdatedFiles();
+  await createRepository('gitddb-test');
+//  await deleteRepository('gitddb-test');
+
+//    getUpdatedFiles();
 
 //    await update(config.targetID);
 //    await update(config.targetID);
     
     // create();
+  console.log('done');
 }
 
 test();
